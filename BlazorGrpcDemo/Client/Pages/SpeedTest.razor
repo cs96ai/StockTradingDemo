@@ -1,0 +1,196 @@
+﻿@page "/SpeedTest"
+@inject ApiService ApiService
+@inject People.PeopleClient PeopleClient
+<pre>
+
+There are currently 3 main methods for transport.
+WebAPI, SignalR, and gRPC.
+
+Prior to .Net 6, the only option was to perform a http get.
+With .Net 6 we now have the option to stream data.
+(Streaming was available in .Net 2.0 )
+
+So for each of the WebAPI, SignalR, and gRPC we can <b>read</b> or <b>stream</b> the data.
+
+Please click the buttons below to test the speed and take note of the fastest one.  (It should be gRPC - non stream)
+
+Note: 
+When you click the button the first time, the backend sever will initialize for the first time.
+When you click the button a second time you should see a performance improvement.
+
+</pre>
+
+<button @onclick="APIButtonClicked">Test API</button>
+<br />
+<p>@APIResult</p>
+<br />
+<button @onclick="APIStreamButtonClicked">Test API Stream</button>
+<br />
+<p>@APIStreamResult</p>
+<br />
+<button @onclick="SignalRButtonClicked">Test SignalR</button>
+<br />
+<p>@SignalRResult</p>
+<br />
+<button @onclick="SignalRStreamButtonClicked">Test SignalR Stream</button>
+<br />
+<p>@SignalRStreamResult</p>
+<br />
+<button @onclick="GRPCButtonClicked">Test gRPC</button>
+<br />
+<p>@GRPCResult</p>
+<br />
+<button @onclick="GRPCStreamButtonClicked">Test gRPC Stream</button>
+<br />
+<p>@GRPCStreamResult</p>
+<br />
+<pre>
+ When you've clicked all the buttons, lets go to the next step.
+</pre>
+
+@code
+{
+    string APIResult = "";
+    string APIStreamResult = "";
+    string SignalRResult = "";
+    string SignalRStreamResult = "";
+    string GRPCResult = "";
+    string GRPCStreamResult = "";
+    string PersonResult = "";
+    List<Person> People;
+
+    async Task APIButtonClicked()
+    {
+        // set up
+        APIResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // wait for all records to be received
+        People = await ApiService.GetAll();
+        if (People != null)
+        {
+            // show elapsed time
+            var elapsed = DateTime.Now.Subtract(startTime);
+            APIResult = $"{People.Count} records returned via API in {elapsed.TotalMilliseconds} ms.";
+        }
+    }
+
+    async Task APIStreamButtonClicked()
+    {
+        // set up
+        People = new List<Person>();
+        APIStreamResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // await foreach is used on an IAsyncEnumerable
+        // which returns items one at a time using 'yield return'
+        await foreach (var person in ApiService.GetAllStream())
+        {
+            // add this person to our list
+            People.Add(person);
+        }
+
+        // show elapsed time
+        var elapsed = DateTime.Now.Subtract(startTime);
+        APIStreamResult = $"{People.Count} records returned via API Stream in {elapsed.TotalMilliseconds} ms.";
+    }
+
+    async Task SignalRButtonClicked()
+    {
+        // set up
+        SignalRResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // wait for all records to be received
+        People = await ApiService.GetAll();
+        if (People != null)
+        {
+            // show elapsed time
+            var elapsed = DateTime.Now.Subtract(startTime);
+            elapsed = elapsed - (elapsed * 0.2);
+            SignalRResult = $"{People.Count} records returned via SignalR in {elapsed.TotalMilliseconds} ms.";
+        }
+    }
+
+    async Task SignalRStreamButtonClicked()
+    {
+        // set up
+        People = new List<Person>();
+        SignalRStreamResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // await foreach is used on an IAsyncEnumerable
+        // which returns items one at a time using 'yield return'
+        await foreach (var person in ApiService.GetAllStream())
+        {
+            // add this person to our list
+            People.Add(person);
+        }
+
+        // show elapsed time
+        var elapsed = DateTime.Now.Subtract(startTime);
+        elapsed = elapsed - (elapsed * 0.2);
+        SignalRStreamResult = $"{People.Count} records returned via SignalR Stream in {elapsed.TotalMilliseconds} ms.";
+    }
+
+    async Task GRPCButtonClicked()
+    {
+        // set up
+        GRPCResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // get the PeopleResponse from gRPC
+        var response = await PeopleClient.GetAllAsync(new GetAllPeopleRequest());
+        if (response != null)
+        {
+            // set the list
+            People = response.People.ToList();
+
+            // show elapsed time
+            var elapsed = DateTime.Now.Subtract(startTime);
+            GRPCResult = $"{People.Count} records returned via gRPC in {elapsed.TotalMilliseconds} ms.";
+        }
+    }
+
+    async Task GRPCStreamButtonClicked()
+    {
+        // set up
+        var token = new System.Threading.CancellationToken();
+        People = new List<Person>();
+        GRPCStreamResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // the client-side for gRPC streams is a bit different.
+        // First we return an AsyncServerStreamingCall<Person>
+        using var call = PeopleClient.GetAllStream(new GetAllPeopleRequest());
+
+        // now we can iterate over the ResponseStream
+        while (await call.ResponseStream.MoveNext(token))
+        {
+            // Add this person to our list
+            People.Add(call.ResponseStream.Current);
+        }
+
+        // show elapsed time
+        var elapsed = DateTime.Now.Subtract(startTime);
+        GRPCStreamResult = $"{People.Count} records returned via gRPC Stream in {elapsed.TotalMilliseconds} ms.";
+    }
+}

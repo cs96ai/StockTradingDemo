@@ -1,0 +1,191 @@
+﻿@page "/counter"
+@inject ApiService ApiService
+@inject People.PeopleClient PeopleClient
+
+<pre>
+Just to recap what we saw on the speed test screen.
+<b>Non streaming gRPC</b> was the fastest.
+
+But from an end users perspective, we're not actually concered about fastest.
+What we're really concered about is "perceived fastest".
+
+What's "perceived fastest"?  (by example)
+We need to show the user 5000 records.
+We can't physically fit all 5000 records on the screen at once so we give the user a scroll bar.
+The user's perception of fast...  is how long it takes to load the data that they can immediatly view.
+    
+Another way....
+While gRPC might load the entire dataset the fastest... it forces the user to wait for the entire download before the data can be displayed.
+If we use gRPC streaming, we can display the data as soon and the first bit arrives.
+
+Lets test this below.
+What you're looking for is... how long does it take to display the data in the text box.
+
+</pre>
+
+<button @onclick="APIButtonClicked">Test API</button>
+<button @onclick="APIStreamButtonClicked">Test API Stream</button>
+<button @onclick="GRPCButtonClicked">Test gRPC</button>
+<button @onclick="GRPCStreamButtonClicked">Test gRPC Stream</button>
+<br />
+<p>@APIResult</p>
+
+<select size=20 style="width:100%;">
+    @foreach (var person in People)
+    {
+        <option>@person.FirstName @person.LastName</option>
+    }
+</select>
+
+@code
+{
+    string APIResult = "";
+    List<Person> People { get; set; } = new List<Person>();
+
+    async Task APIButtonClicked()
+    {
+        // set up
+        People.Clear();
+        await Task.Delay(1);
+        APIResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // wait for all records
+        People = await ApiService.GetAll();
+        if (People != null)
+        {
+            // elapsed time
+            var elapsed = DateTime.Now.Subtract(startTime);
+            APIResult = $"{People.Count} records returned via API in {elapsed.TotalMilliseconds} ms.";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    async Task APIStreamButtonClicked()
+    {
+        // set up
+        People.Clear();
+        await Task.Delay(1);
+        APIResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        double elapsed20 = 0;
+        var startTime = DateTime.Now;
+
+        // await foreach is used on an IAsyncEnumerable
+        // which returns items one at a time using 'yield return'
+        await foreach (var person in ApiService.GetAllStream())
+        {
+            // Add this person to the list
+            People.Add(person);
+
+            // have we reached 20 yet?
+            if (People.Count == 20)
+            {
+                // yes! That's enough to fill up the <select>
+                elapsed20 = DateTime.Now.Subtract(startTime).TotalMilliseconds;
+                APIResult = $"Loading ({elapsed20} ms)...{People.Count}";
+
+                // refresh the page
+                await InvokeAsync(StateHasChanged);
+
+                // we need this because we're in a tight loop.
+                // give the UI a chance to re-render
+                await Task.Delay(1);
+            }
+
+            // Is the count evenly divisible by 100?
+            else if (People.Count % 100 == 0)
+            {
+                // yes! refresh the UI.
+                APIResult = $"Loading ({elapsed20} ms)...{People.Count}";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(1);
+            }
+        }
+        
+        // show elapsed time
+        var elapsed = DateTime.Now.Subtract(startTime);
+        APIResult = $"{People.Count} records returned via API Stream in {elapsed.TotalMilliseconds} ms. " 
+            + $" Initial 20 in {elapsed20} ms." ;
+    }
+
+    async Task GRPCButtonClicked()
+    {
+        // set up
+        People.Clear();
+        await Task.Delay(1);
+        APIResult = "Loading...";
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+
+        // wait for the entire list
+        var result = await PeopleClient.GetAllAsync(new GetAllPeopleRequest());
+        if (result != null)
+        {
+            // Add to our list
+            People.AddRange(result.People.ToList());
+
+            // show elapsed time
+            var elapsed = DateTime.Now.Subtract(startTime);
+            APIResult = $"{People.Count} records returned via gRPC in {elapsed.TotalMilliseconds} ms.";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    async Task GRPCStreamButtonClicked()
+    {
+        // set up
+        var token = new System.Threading.CancellationToken();
+        double elapsed20 = 0;
+        People.Clear();
+        APIResult = "Loading...";
+        await Task.Delay(1);
+        await InvokeAsync(StateHasChanged);
+
+        // start time
+        var startTime = DateTime.Now;
+        
+        // the client-side for gRPC streams is a bit different.
+        // First we return an AsyncServerStreamingCall<Person>
+        using var call = PeopleClient.GetAllStream(new GetAllPeopleRequest());
+        
+        // Now we can iterate through the response stream
+        while (await call.ResponseStream.MoveNext(token))
+        {
+            // add this person to our list
+            People.Add(call.ResponseStream.Current);
+
+            // have we reached 20 yet?
+            if (People.Count == 20)
+            {
+                // yes! That's enough to fill up the <select>
+                elapsed20 = DateTime.Now.Subtract(startTime).TotalMilliseconds;
+                APIResult = $"Loading ({elapsed20} ms)...{People.Count}";
+                // refresh the page
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(1);
+            }
+
+            // Is the count evenly divisible by 100?
+            else if (People.Count % 100 == 0)
+            {
+                // yes! refresh the UI.
+                APIResult = $"Loading ({elapsed20} ms)...{People.Count}";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(1);
+            }
+        }
+
+        // show elapsed time.
+        var elapsed = DateTime.Now.Subtract(startTime);
+        APIResult = $"{People.Count} records returned via gRPC Stream in {elapsed.TotalMilliseconds} ms. " 
+            + $" Initial 20 in {elapsed20} ms." ;
+    }
+}
